@@ -25,6 +25,242 @@ from core.browser_manager import BrowserManager
 from core.config_manager import ConfigManager, ProfileConfig
 from gui.icon_helper import get_application_icon
 
+class ProfileItemWidget(QWidget):
+    """自定义Profile列表项控件"""
+    
+    # 定义信号
+    startRequested = pyqtSignal(object)  # 启动信号
+    closeRequested = pyqtSignal(object)  # 关闭信号
+    
+    def __init__(self, profile, is_running=False, browser_info=None):
+        super().__init__()
+        self.profile = profile
+        self.is_running = is_running
+        self.browser_info = browser_info
+        self.is_transitioning = False  # 添加过渡状态标志
+        self.transition_type = None  # 'starting' 或 'stopping'
+        self.setup_ui()
+        self.update_button_states()
+    
+    def setup_ui(self):
+        """设置UI"""
+        layout = QVBoxLayout()
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
+        
+        # 主信息行
+        main_layout = QHBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # 状态和名称
+        info_layout = QVBoxLayout()
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(2)
+        
+        # 状态指示器和名称
+        status_layout = QHBoxLayout()
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.status_label = QLabel("⚪")
+        self.status_label.setFixedSize(16, 16)
+        
+        self.name_label = QLabel(self.profile.display_name)
+        self.name_label.setFont(QFont("", 12, QFont.Bold))
+        
+        status_layout.addWidget(self.status_label)
+        status_layout.addWidget(self.name_label)
+        status_layout.addStretch()
+        
+        info_layout.addLayout(status_layout)
+        
+        # Profile文件夹信息
+        profile_folder = self.profile.name if self.profile.name != "Default" else "默认Profile"
+        folder_label = QLabel(f"📁 {profile_folder}")
+        folder_label.setStyleSheet("color: #666; font-size: 10px;")
+        info_layout.addWidget(folder_label)
+        
+        # 书签和扩展信息
+        stats_label = QLabel(f"📚 书签: {self.profile.bookmarks_count} | 🧩 扩展: {self.profile.extensions_count}")
+        stats_label.setStyleSheet("color: #666; font-size: 10px;")
+        info_layout.addWidget(stats_label)
+        
+        # 运行信息（如果正在运行）
+        self.runtime_label = QLabel("")
+        self.runtime_label.setStyleSheet("color: #007bff; font-size: 10px;")
+        info_layout.addWidget(self.runtime_label)
+        
+        main_layout.addLayout(info_layout, 1)  # 拉伸因子为1
+        
+        # 操作按钮 - 只保留一个切换按钮
+        button_layout = QVBoxLayout()
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setSpacing(2)
+        
+        # 启动/关闭切换按钮
+        self.toggle_button = QPushButton("启动")
+        self.toggle_button.setFixedSize(80, 30)
+        self.toggle_button.clicked.connect(self.on_toggle_clicked)
+        
+        button_layout.addWidget(self.toggle_button)
+        button_layout.addStretch()  # 垂直居中
+        
+        main_layout.addLayout(button_layout)
+        
+        layout.addLayout(main_layout)
+        
+        self.setLayout(layout)
+        
+        # 设置样式
+        self.setStyleSheet("""
+            ProfileItemWidget {
+                background-color: white;
+                border: 1px solid #e9ecef;
+                border-radius: 6px;
+                margin: 2px;
+            }
+            ProfileItemWidget:hover {
+                background-color: #f8f9fa;
+                border-color: #007bff;
+            }
+            QPushButton {
+                background-color: #f8f9fa;
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                font-size: 10px;
+                padding: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #e9ecef;
+            }
+            QPushButton:pressed {
+                background-color: #dee2e6;
+            }
+        """)
+    
+    def on_toggle_clicked(self):
+        """切换按钮点击处理"""
+        if self.is_transitioning:
+            # 如果正在过渡中，忽略点击
+            return
+            
+        if self.is_running:
+            # 当前运行中，执行关闭
+            self.set_transition_state('stopping')
+            self.closeRequested.emit(self.profile)
+        else:
+            # 当前未运行，执行启动
+            self.set_transition_state('starting')
+            self.startRequested.emit(self.profile)
+    
+    def set_transition_state(self, transition_type):
+        """设置过渡状态"""
+        self.is_transitioning = True
+        self.transition_type = transition_type
+        self.update_button_states()
+    
+    def clear_transition_state(self):
+        """清除过渡状态"""
+        self.is_transitioning = False
+        self.transition_type = None
+        self.update_button_states()
+    
+    def update_status(self, is_running, browser_info=None):
+        """更新运行状态"""
+        # 清除过渡状态
+        if self.is_transitioning:
+            self.clear_transition_state()
+            
+        self.is_running = is_running
+        self.browser_info = browser_info
+        
+        if is_running:
+            self.status_label.setText("🟢")
+            
+            if browser_info:
+                memory_mb = browser_info['memory_usage'] / (1024 * 1024)
+                pid_text = f"🆔 PID: {browser_info['pid']}"
+                if browser_info.get('discovered'):
+                    pid_text += " 📡"
+                self.runtime_label.setText(f"💾 内存: {memory_mb:.1f}MB | {pid_text}")
+            else:
+                self.runtime_label.setText("🟢 运行中")
+        else:
+            self.status_label.setText("⚪")
+            self.runtime_label.setText("")
+        
+        self.update_button_states()
+    
+    def update_button_states(self):
+        """更新按钮状态"""
+        if self.is_transitioning:
+            # 过渡状态 - 显示黄色并禁用
+            self.toggle_button.setEnabled(False)
+            if self.transition_type == 'starting':
+                self.toggle_button.setText("启动中")
+                self.status_label.setText("🟡")
+            elif self.transition_type == 'stopping':
+                self.toggle_button.setText("关闭中")
+                self.status_label.setText("🟡")
+            
+            self.toggle_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #ffc107;
+                    color: #212529;
+                    border: 1px solid #ffc107;
+                    border-radius: 3px;
+                    font-size: 10px;
+                    padding: 4px;
+                    font-weight: bold;
+                }
+                QPushButton:disabled {
+                    background-color: #ffc107;
+                    color: #6c757d;
+                }
+            """)
+        elif self.is_running:
+            # 运行中状态 - 显示关闭按钮
+            self.toggle_button.setEnabled(True)
+            self.toggle_button.setText("关闭")
+            self.toggle_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #dc3545;
+                    color: white;
+                    border: 1px solid #dc3545;
+                    border-radius: 3px;
+                    font-size: 10px;
+                    padding: 4px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #c82333;
+                }
+                QPushButton:pressed {
+                    background-color: #bd2130;
+                }
+            """)
+        else:
+            # 停止状态 - 显示启动按钮
+            self.toggle_button.setEnabled(True)
+            self.toggle_button.setText("启动")
+            self.toggle_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #28a745;
+                    color: white;
+                    border: 1px solid #28a745;
+                    border-radius: 3px;
+                    font-size: 10px;
+                    padding: 4px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #218838;
+                }
+                QPushButton:pressed {
+                    background-color: #1e7e34;
+                }
+            """)
+
 class ProfileListWidget(QListWidget):
     """自定义Profile列表控件"""
     
@@ -33,8 +269,8 @@ class ProfileListWidget(QListWidget):
     
     def __init__(self):
         super().__init__()
-        self.setMinimumWidth(300)
-        self.setMaximumWidth(400)
+        self.setMinimumWidth(350)  # 增加宽度以容纳按钮
+        self.setMaximumWidth(450)
         
         # 启用拖拽排序
         self.setDragDropMode(QListWidget.InternalMove)
@@ -49,18 +285,16 @@ class ProfileListWidget(QListWidget):
                 padding: 5px;
             }
             QListWidget::item {
-                background-color: white;
-                border: 1px solid #e9ecef;
-                border-radius: 6px;
-                padding: 10px;
+                background: transparent;
+                border: none;
+                padding: 0px;
                 margin: 3px;
             }
             QListWidget::item:selected {
-                background-color: #007bff;
-                color: white;
+                background: transparent;
             }
             QListWidget::item:hover {
-                background-color: #e3f2fd;
+                background: transparent;
             }
         """)
     
@@ -71,7 +305,7 @@ class ProfileListWidget(QListWidget):
         self.orderChanged.emit()
 
 class ProfileInfoWidget(QWidget):
-    """Profile详细信息控件"""
+    """Profile详细信息控件（移除操作按钮）"""
     
     def __init__(self):
         super().__init__()
@@ -242,62 +476,9 @@ class ProfileInfoWidget(QWidget):
         config_button_layout.addWidget(self.reset_config_button)
         config_button_layout.addStretch()
         
-        # 操作按钮
-        button_layout = QHBoxLayout()
-        self.start_button = QPushButton("启动浏览器")
-        self.close_button = QPushButton("关闭浏览器")
-        self.restart_button = QPushButton("重启浏览器")
-        
-        self.start_button.setStyleSheet("""
-            QPushButton {
-                background-color: #28a745;
-                color: white;
-                border: none;
-                padding: 10px 20px;
-                border-radius: 5px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #218838;
-            }
-        """)
-        
-        self.close_button.setStyleSheet("""
-            QPushButton {
-                background-color: #dc3545;
-                color: white;
-                border: none;
-                padding: 10px 20px;
-                border-radius: 5px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #c82333;
-            }
-        """)
-        
-        self.restart_button.setStyleSheet("""
-            QPushButton {
-                background-color: #ffc107;
-                color: black;
-                border: none;
-                padding: 10px 20px;
-                border-radius: 5px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #e0a800;
-            }
-        """)
-        
-        button_layout.addWidget(self.start_button)
-        button_layout.addWidget(self.close_button)
-        button_layout.addWidget(self.restart_button)
-        
         layout.addWidget(info_group)
         layout.addWidget(config_group)
         layout.addLayout(config_button_layout)
-        layout.addLayout(button_layout)
         layout.addStretch()
         
         self.setLayout(layout)
@@ -520,6 +701,9 @@ class MainWindow(QMainWindow):
         self.browser_manager = BrowserManager()
         self.config_manager = ConfigManager()
         
+        # 初始化外部检查时间戳
+        self._last_external_check = 0
+        
         # 设置窗口图标
         self.setWindowIcon(get_application_icon())
         
@@ -556,9 +740,6 @@ class MainWindow(QMainWindow):
         
         # 中间详细信息
         self.profile_info = ProfileInfoWidget()
-        self.profile_info.start_button.clicked.connect(self.start_browser)
-        self.profile_info.close_button.clicked.connect(self.close_browser)
-        self.profile_info.restart_button.clicked.connect(self.restart_browser)
         
         # 右侧状态监控
         self.status_monitor = StatusMonitorWidget()
@@ -650,12 +831,12 @@ class MainWindow(QMainWindow):
         """设置定时器，用于更新状态"""
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_status)
-        self.timer.start(2000)  # 每2秒更新一次
+        self.timer.start(1000)  # 每1秒更新一次（提高频率）
         
         # 添加一个更频繁的定时器来检测浏览器状态变化
         self.status_check_timer = QTimer()
         self.status_check_timer.timeout.connect(self.check_browser_status)
-        self.status_check_timer.start(1500)  # 每1.5秒检查一次浏览器状态（更频繁）
+        self.status_check_timer.start(500)  # 每0.5秒检查一次浏览器状态（大幅提高频率）
     
     def load_profiles(self):
         """加载Profile列表"""
@@ -675,49 +856,31 @@ class MainWindow(QMainWindow):
         
         # 先处理已知的Profile
         for profile in profiles:
-            item = QListWidgetItem()
-            
-            # 检查运行状态 - 使用实际的运行状态而不是缓存
+            # 检查运行状态
             is_running = profile.name in running_browsers
-            status_indicator = "🟢 " if is_running else "⚪ "
+            browser_info = running_browsers.get(profile.name) if is_running else None
             
-            display_text = f"{status_indicator}{profile.display_name}"
+            # 创建ProfileItemWidget
+            item_widget = ProfileItemWidget(profile, is_running, browser_info)
             
-            # 简化路径显示，只显示Profile名称
-            profile_folder = profile.name if profile.name != "Default" else "默认Profile"
-            display_text += f"\n📁 {profile_folder}"
+            # 连接信号
+            item_widget.startRequested.connect(self.start_browser_from_profile)
+            item_widget.closeRequested.connect(self.close_browser_from_profile)
             
-            display_text += f"\n📚 书签: {profile.bookmarks_count} | 🧩 扩展: {profile.extensions_count}"
-            
-            # 如果正在运行，添加运行信息
-            if is_running:
-                browser_info = running_browsers[profile.name]
-                memory_mb = browser_info['memory_usage'] / (1024 * 1024)
-                pid_text = f"🆔 PID: {browser_info['pid']}"
-                # 如果是外部发现的浏览器，添加标识
-                if browser_info.get('discovered'):
-                    pid_text += " 📡"
-                display_text += f"\n💾 内存: {memory_mb:.1f}MB | {pid_text}"
-            
-            item.setText(display_text)
+            # 创建列表项
+            item = QListWidgetItem()
             item.setData(Qt.UserRole, profile)
+            
+            # 设置项目大小
+            item.setSizeHint(item_widget.sizeHint())
+            
+            # 添加到列表
             self.profile_list.addItem(item)
+            self.profile_list.setItemWidget(item, item_widget)
         
         # 处理外部发现的但不在已知Profile列表中的浏览器（如Default Profile）
         for browser_name, browser_info in running_browsers.items():
             if browser_info.get('discovered') and browser_name not in profile_map:
-                # 创建一个虚拟的Profile项目
-                item = QListWidgetItem()
-                
-                display_text = f"🟢 {browser_name} (外部检测)"
-                display_text += f"\n📁 {browser_name}"
-                display_text += f"\n📚 书签: - | 🧩 扩展: -"
-                
-                memory_mb = browser_info['memory_usage'] / (1024 * 1024)
-                pid_text = f"🆔 PID: {browser_info['pid']} 📡"
-                display_text += f"\n💾 内存: {memory_mb:.1f}MB | {pid_text}"
-                
-                item.setText(display_text)
                 # 创建一个虚拟的Profile对象
                 class VirtualProfile:
                     def __init__(self, name):
@@ -732,8 +895,24 @@ class MainWindow(QMainWindow):
                         self.is_default = (name == "Default")
                 
                 virtual_profile = VirtualProfile(browser_name)
+                
+                # 创建ProfileItemWidget
+                item_widget = ProfileItemWidget(virtual_profile, True, browser_info)
+                
+                # 连接信号
+                item_widget.startRequested.connect(self.start_browser_from_profile)
+                item_widget.closeRequested.connect(self.close_browser_from_profile)
+                
+                # 创建列表项
+                item = QListWidgetItem()
                 item.setData(Qt.UserRole, virtual_profile)
+                
+                # 设置项目大小
+                item.setSizeHint(item_widget.sizeHint())
+                
+                # 添加到列表
                 self.profile_list.addItem(item)
+                self.profile_list.setItemWidget(item, item_widget)
         
         total_profiles = len(profiles) + len([b for b in running_browsers.values() if b.get('discovered') and b not in profile_map])
         self.status_message.setText(f"找到 {total_profiles} 个Profile")
@@ -747,7 +926,9 @@ class MainWindow(QMainWindow):
     
     def on_profile_double_clicked(self, item):
         """Profile被双击时启动浏览器"""
-        self.start_browser()
+        profile = item.data(Qt.UserRole)
+        if profile:
+            self.start_browser_from_profile(profile)
     
     def on_profile_order_changed(self):
         """Profile顺序改变时的处理"""
@@ -852,10 +1033,6 @@ class MainWindow(QMainWindow):
         self.status_message.setText(f"正在启动浏览器: {profile.display_name}...")
         self.status_monitor.add_log(f"🚀 尝试启动浏览器: {profile.display_name}")
         
-        # 禁用启动按钮，防止重复点击
-        self.profile_info.start_button.setEnabled(False)
-        self.profile_info.start_button.setText("启动中...")
-        
         # 使用QTimer延迟执行启动，避免界面卡顿
         QTimer.singleShot(100, lambda: self._do_start_browser_with_config(profile, config_dict))
     
@@ -872,6 +1049,8 @@ class MainWindow(QMainWindow):
                 # 刷新Profile列表显示状态
                 self.load_profiles()
             else:
+                # 启动失败，清除过渡状态
+                self.clear_profile_transition_state(profile.name)
                 self.status_monitor.add_log(f"❌ 启动浏览器失败: {profile.display_name}")
                 self.status_message.setText(f"❌ 启动失败: {profile.display_name}")
                 
@@ -884,10 +1063,16 @@ class MainWindow(QMainWindow):
                 
                 QMessageBox.critical(self, "启动失败", error_msg)
         
+        except Exception as e:
+            # 异常情况，清除过渡状态
+            self.clear_profile_transition_state(profile.name)
+            self.status_monitor.add_log(f"❌ 启动浏览器异常: {profile.display_name} - {str(e)}")
+            self.status_message.setText(f"❌ 启动异常: {profile.display_name}")
+            QMessageBox.critical(self, "启动异常", f"启动浏览器时发生异常：\n{str(e)}")
+        
         finally:
-            # 恢复启动按钮
-            self.profile_info.start_button.setEnabled(True)
-            self.profile_info.start_button.setText("启动浏览器")
+            # 刷新Profile列表以更新状态
+            self.load_profiles()
     
     def close_browser(self):
         """关闭浏览器"""
@@ -911,43 +1096,6 @@ class MainWindow(QMainWindow):
         else:
             self.status_monitor.add_log(f"❌ 关闭浏览器失败: {profile.display_name}")
             QMessageBox.warning(self, "警告", f"关闭浏览器失败: {profile.display_name}")
-    
-    def restart_browser(self):
-        """重启浏览器"""
-        if not self.profile_info.current_profile:
-            QMessageBox.warning(self, "警告", "请先选择一个Profile")
-            return
-        
-        profile = self.profile_info.current_profile
-        
-        # 先保存当前配置
-        current_config = self.profile_info.get_current_config()
-        self.config_manager.save_config(current_config)
-        
-        # 获取配置字典
-        config_dict = self.config_manager.get_config_dict(profile.name)
-        
-        success = self.browser_manager.restart_browser(profile, **config_dict)
-        
-        if success:
-            self.status_monitor.add_log(f"🔄 重启浏览器: {profile.display_name}")
-            self.status_message.setText(f"已重启: {profile.display_name}")
-        else:
-            QMessageBox.critical(self, "错误", f"重启浏览器失败: {profile.display_name}")
-    
-    def close_all_browsers(self):
-        """关闭所有浏览器"""
-        reply = QMessageBox.question(self, "确认", "确定要关闭所有运行中的浏览器吗？",
-                                   QMessageBox.Yes | QMessageBox.No,
-                                   QMessageBox.No)
-        
-        if reply == QMessageBox.Yes:
-            success = self.browser_manager.close_all_browsers()
-            if success:
-                self.status_monitor.add_log("关闭所有浏览器")
-                self.status_message.setText("已关闭所有浏览器")
-            else:
-                QMessageBox.warning(self, "警告", "部分浏览器关闭失败")
     
     def update_status(self):
         """更新状态显示"""
@@ -974,8 +1122,12 @@ class MainWindow(QMainWindow):
         # 检查并清理已停止的浏览器
         stopped_browsers = self.browser_manager.check_and_cleanup_stopped_browsers()
         
+        # 标记是否需要更新界面
+        need_update_ui = False
+        
         # 如果有浏览器被外部关闭，更新界面和日志
         if stopped_browsers:
+            need_update_ui = True
             for profile_name in stopped_browsers:
                 # 查找对应的Profile显示名称
                 display_name = profile_name
@@ -989,20 +1141,18 @@ class MainWindow(QMainWindow):
                 
                 # 更新状态栏
                 self.status_message.setText(f"浏览器已关闭: {display_name}")
-            
-            # 刷新Profile列表显示状态
-            self.load_profiles()
-            
-            # 更新状态监控
-            self.update_status()
+                
+                # 更新对应的列表项状态
+                self.update_profile_item_status(profile_name, False)
         
         # 检查是否有新的外部浏览器启动（每隔一段时间检查一次）
-        if not hasattr(self, '_last_external_check') or (time.time() - self._last_external_check) > 10:
+        if not hasattr(self, '_last_external_check') or (time.time() - self._last_external_check) > 5:  # 缩短检查间隔到5秒
             self._last_external_check = time.time()
             # 发现新的外部浏览器
             if hasattr(self.profile_manager, 'profiles'):
                 external_browsers = self.browser_manager.discover_external_browsers(self.profile_manager.profiles)
                 if external_browsers:
+                    need_update_ui = True
                     for profile_name in external_browsers:
                         # 查找对应的Profile显示名称
                         display_name = profile_name
@@ -1012,10 +1162,49 @@ class MainWindow(QMainWindow):
                                 break
                         
                         self.status_monitor.add_log(f"📡 检测到外部启动的浏览器: {display_name}")
-                    
-                    # 刷新界面
-                    self.load_profiles()
-                    self.update_status()
+        
+        # 如果检测到状态变化，更新界面
+        if need_update_ui:
+            # 刷新Profile列表显示状态
+            self.load_profiles()
+            
+            # 立即更新状态监控
+            self.update_status()
+        else:
+            # 即使没有重大变化，也定期更新运行状态（内存使用等）
+            self.update_running_profile_items()
+    
+    def update_profile_item_status(self, profile_name, is_running, browser_info=None):
+        """更新特定Profile列表项的状态"""
+        for i in range(self.profile_list.count()):
+            item = self.profile_list.item(i)
+            profile = item.data(Qt.UserRole)
+            if profile and profile.name == profile_name:
+                item_widget = self.profile_list.itemWidget(item)
+                if isinstance(item_widget, ProfileItemWidget):
+                    item_widget.update_status(is_running, browser_info)
+                break
+    
+    def update_running_profile_items(self):
+        """更新所有运行中Profile的状态信息（内存使用等）"""
+        if hasattr(self.profile_manager, 'profiles'):
+            running_browsers = self.browser_manager.get_all_running_browsers(self.profile_manager.profiles)
+            
+            for i in range(self.profile_list.count()):
+                item = self.profile_list.item(i)
+                profile = item.data(Qt.UserRole)
+                if profile:
+                    item_widget = self.profile_list.itemWidget(item)
+                    if isinstance(item_widget, ProfileItemWidget):
+                        is_running = profile.name in running_browsers
+                        browser_info = running_browsers.get(profile.name) if is_running else None
+                        
+                        # 只有状态发生变化时才更新
+                        if item_widget.is_running != is_running:
+                            item_widget.update_status(is_running, browser_info)
+                        elif is_running and browser_info:
+                            # 更新运行时信息（内存使用等）
+                            item_widget.update_status(is_running, browser_info)
     
     def show_about(self):
         """显示关于对话框"""
@@ -1044,7 +1233,85 @@ class MainWindow(QMainWindow):
         else:
             # 如果取消退出，重新启动定时器
             if hasattr(self, 'timer'):
-                self.timer.start(2000)
+                self.timer.start(1000)
             if hasattr(self, 'status_check_timer'):
-                self.status_check_timer.start(1500)
-            event.ignore() 
+                self.status_check_timer.start(500)
+            event.ignore()
+
+    def start_browser_from_profile(self, profile):
+        """从Profile对象启动浏览器"""
+        # 设置当前Profile以便获取配置
+        self.profile_info.current_profile = profile
+        self.profile_info.update_profile_info(profile)
+        
+        # 调用原有的启动方法
+        self.start_browser()
+    
+    def close_browser_from_profile(self, profile):
+        """从Profile对象关闭浏览器"""
+        # 检查浏览器是否在运行
+        if not self.browser_manager.is_browser_running(profile.name):
+            # 清除按钮的过渡状态
+            self.clear_profile_transition_state(profile.name)
+            QMessageBox.information(self, "提示", f"浏览器未在运行\n\nProfile: {profile.display_name}")
+            return
+        
+        self.status_message.setText(f"正在关闭浏览器: {profile.display_name}...")
+        success = self.browser_manager.close_browser(profile.name)
+        
+        if success:
+            self.status_monitor.add_log(f"✅ 成功关闭浏览器: {profile.display_name}")
+            self.status_message.setText(f"已关闭: {profile.display_name}")
+            # 立即刷新列表
+            self.load_profiles()
+        else:
+            # 操作失败，清除过渡状态
+            self.clear_profile_transition_state(profile.name)
+            self.status_monitor.add_log(f"❌ 关闭浏览器失败: {profile.display_name}")
+            QMessageBox.warning(self, "警告", f"关闭浏览器失败: {profile.display_name}")
+    
+    def clear_profile_transition_state(self, profile_name):
+        """清除特定Profile的过渡状态"""
+        for i in range(self.profile_list.count()):
+            item = self.profile_list.item(i)
+            profile = item.data(Qt.UserRole)
+            if profile and profile.name == profile_name:
+                item_widget = self.profile_list.itemWidget(item)
+                if isinstance(item_widget, ProfileItemWidget):
+                    item_widget.clear_transition_state()
+                break
+    
+    def close_all_browsers(self):
+        """关闭所有浏览器"""
+        reply = QMessageBox.question(self, "确认", "确定要关闭所有运行中的浏览器吗？",
+                                   QMessageBox.Yes | QMessageBox.No,
+                                   QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            success = self.browser_manager.close_all_browsers()
+            if success:
+                self.status_monitor.add_log("关闭所有浏览器")
+                self.status_message.setText("已关闭所有浏览器")
+            else:
+                QMessageBox.warning(self, "警告", "部分浏览器关闭失败")
+    
+    def update_running_profile_items(self):
+        """更新所有运行中Profile的状态信息（内存使用等）"""
+        if hasattr(self.profile_manager, 'profiles'):
+            running_browsers = self.browser_manager.get_all_running_browsers(self.profile_manager.profiles)
+            
+            for i in range(self.profile_list.count()):
+                item = self.profile_list.item(i)
+                profile = item.data(Qt.UserRole)
+                if profile:
+                    item_widget = self.profile_list.itemWidget(item)
+                    if isinstance(item_widget, ProfileItemWidget):
+                        is_running = profile.name in running_browsers
+                        browser_info = running_browsers.get(profile.name) if is_running else None
+                        
+                        # 只有状态发生变化时才更新
+                        if item_widget.is_running != is_running:
+                            item_widget.update_status(is_running, browser_info)
+                        elif is_running and browser_info:
+                            # 更新运行时信息（内存使用等）
+                            item_widget.update_status(is_running, browser_info) 
