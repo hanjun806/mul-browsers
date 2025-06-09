@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <!-- 背景圆形 -->
+  <circle cx="32" cy="32" r="30" fill="#007bff" stroke="#0056b3" stroke-width="2"/>
+  
+  <!-- 主浏览器窗口 -->
+  <rect x="12" y="18" width="40" height="28" rx="3" fill="#ffffff" stroke="#dee2e6" stroke-width="1"/>
+  
+  <!-- 浏览器标题栏 -->
+  <rect x="12" y="18" width="40" height="6" rx="3" fill="#f8f9fa"/>
+  
+  <!-- 浏览器按钮 -->
+  <circle cx="16" cy="21" r="1.5" fill="#ff6b6b"/>
+  <circle cx="20" cy="21" r="1.5" fill="#feca57"/>
+  <circle cx="24" cy="21" r="1.5" fill="#48dbfb"/>
+  
+  <!-- 地址栏 -->
+  <rect x="28" y="19.5" width="20" height="3" rx="1.5" fill="#e9ecef"/>
+  
+  <!-- 多个窗口效果 -->
+  <rect x="8" y="14" width="40" height="28" rx="3" fill="none" stroke="#6c757d" stroke-width="1" opacity="0.6"/>
+  <rect x="16" y="22" width="40" height="28" rx="3" fill="none" stroke="#6c757d" stroke-width="1" opacity="0.4"/>
+  
+  <!-- 内容区域模拟 -->
+  <rect x="15" y="26" width="34" height="2" fill="#ced4da"/>
+  <rect x="15" y="30" width="28" fill="#ced4da"/>
+  <rect x="15" y="34" width="30" height="2" fill="#ced4da"/>
+  <rect x="15" y="38" width="25" height="2" fill="#ced4da"/>
+</svg> 
