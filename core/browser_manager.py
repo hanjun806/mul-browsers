@@ -360,9 +360,6 @@ class BrowserManager:
     def _quick_check_external_browser_running(self, profile_name: str) -> bool:
         """快速检查是否有外部Chrome进程在使用指定的Profile"""
         try:
-            # ✨ 关键修复：检查独立用户数据目录
-            # 这要与start_browser方法中使用的目录结构保持一致
-            
             # 获取标准Chrome用户数据目录
             if platform.system() == "Darwin":  # macOS
                 base_user_data_dir = os.path.expanduser("~/Library/Application Support/Google/Chrome")
@@ -371,7 +368,7 @@ class BrowserManager:
             else:  # Linux
                 base_user_data_dir = os.path.expanduser("~/.config/google-chrome")
             
-            # 计算独立用户数据目录（与start_browser方法保持一致）
+            # 计算独立用户数据目录
             independent_user_data_dir = os.path.join(
                 os.path.dirname(base_user_data_dir), 
                 f"Chrome_Instance_{profile_name}"
@@ -380,50 +377,44 @@ class BrowserManager:
             # 检查所有Chrome进程
             for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
                 try:
-                    if proc.info['name'] and 'chrome' in proc.info['name'].lower():
-                        cmdline = proc.info['cmdline']
-                        if not cmdline:
-                            continue
+                    if not proc.info['name'] or 'chrome' not in proc.info['name'].lower():
+                        continue
                         
-                        cmdline_str = ' '.join(cmdline)
-                        
-                        # 方法1：检查是否使用了我们的独立用户数据目录（新逻辑）
-                        if independent_user_data_dir in cmdline_str:
-                            # 确保这是主进程（不是Helper进程）
-                            if '--type=' not in cmdline_str:
-                                print(f"检测到Profile {profile_name}的独立实例在运行 (PID: {proc.info['pid']})")
+                    cmdline = proc.info['cmdline']
+                    if not cmdline:
+                        continue
+                    
+                    cmdline_str = ' '.join(cmdline)
+                    
+                    # 跳过子进程
+                    if '--type=' in cmdline_str:
+                        continue
+                    
+                    # 检查是否使用了我们的独立用户数据目录
+                    if independent_user_data_dir in cmdline_str:
+                        # 确认进程是否真的在运行
+                        try:
+                            process = psutil.Process(proc.info['pid'])
+                            if process.is_running() and process.status() != psutil.STATUS_ZOMBIE:
                                 return True
-                        
-                        # 方法2：检查标准Chrome Profile目录（兼容旧逻辑）
-                        elif base_user_data_dir in cmdline_str:
-                            # 检查Profile匹配
-                            if profile_name == "Default":
-                                # 对于Default Profile，不应该有--profile-directory参数
-                                if '--profile-directory=' not in cmdline_str:
-                                    return True
-                            else:
-                                # 对于其他Profile，检查是否匹配
-                                # 使用多种方法检查
-                                profile_patterns = [
-                                    f'--profile-directory={profile_name}',
-                                    f'--profile-directory="{profile_name}"',
-                                ]
-                                
-                                for pattern in profile_patterns:
-                                    if pattern in cmdline_str:
-                                        return True
-                                
-                                # 使用命令行数组检查（更准确）
-                                for i, arg in enumerate(cmdline):
-                                    if arg == '--profile-directory' and i + 1 < len(cmdline):
-                                        if cmdline[i + 1] == profile_name:
-                                            return True
-                                    elif arg.startswith('--profile-directory='):
-                                        extracted_profile = arg.split('=', 1)[1]
-                                        if extracted_profile == profile_name:
-                                            return True
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            continue
+                    
+                    # 检查是否使用了标准Profile目录
+                    profile_dir_arg = f"--profile-directory={profile_name}"
+                    if profile_dir_arg in cmdline_str and base_user_data_dir in cmdline_str:
+                        # 确认进程是否真的在运行
+                        try:
+                            process = psutil.Process(proc.info['pid'])
+                            if process.is_running() and process.status() != psutil.STATUS_ZOMBIE:
+                                return True
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            continue
                 
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+                except Exception as e:
+                    print(f"检查Chrome进程时出错: {e}")
                     continue
             
             return False
@@ -686,27 +677,29 @@ class BrowserManager:
         """获取所有运行中的浏览器信息（包括外部启动的）"""
         running_browsers = {}
         
-        # 首先发现外部启动的浏览器（如果提供了profiles列表）
-        if profiles:
-            external_browsers = self.discover_external_browsers(profiles)
-            running_browsers.update(external_browsers)
-        
-        # 检查并清理已经停止的实例
+        # 首先检查并清理已经停止的实例
         stopped_profiles = []
         for profile_name in list(self.running_instances.keys()):
             instance = self.running_instances[profile_name]
             try:
                 # 检查进程是否还存在并运行
-                if not instance.process.is_running():
+                if not instance.process.is_running() or instance.process.status() == psutil.STATUS_ZOMBIE:
                     print(f"检测到浏览器进程已停止: {profile_name} (PID: {instance.process_id})")
                     stopped_profiles.append(profile_name)
                 else:
                     # 进程存在，获取其信息
-                    browser_info = self.get_browser_info(profile_name)
-                    if browser_info:
-                        running_browsers[profile_name] = browser_info
-                    else:
-                        # 无法获取进程信息，可能进程已经结束
+                    try:
+                        memory_info = instance.process.memory_info()
+                        running_browsers[profile_name] = {
+                            'pid': instance.process_id,
+                            'start_time': instance.start_time,
+                            'memory_usage': memory_info.rss,
+                            'memory_percent': instance.process.memory_percent(),
+                            'cpu_percent': instance.process.cpu_percent(),
+                            'status': instance.process.status(),
+                            'command_line': instance.command_line
+                        }
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
                         print(f"无法获取浏览器进程信息，可能已停止: {profile_name} (PID: {instance.process_id})")
                         stopped_profiles.append(profile_name)
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
@@ -722,6 +715,18 @@ class BrowserManager:
             if profile_name in self.running_instances:
                 del self.running_instances[profile_name]
                 print(f"已清理停止的浏览器实例: {profile_name}")
+        
+        # 然后发现外部启动的浏览器（如果提供了profiles列表）
+        if profiles:
+            external_browsers = self.discover_external_browsers(profiles)
+            # 只添加真正运行中的外部浏览器
+            for profile_name, browser_info in external_browsers.items():
+                try:
+                    process = psutil.Process(browser_info['pid'])
+                    if process.is_running() and process.status() != psutil.STATUS_ZOMBIE:
+                        running_browsers[profile_name] = browser_info
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
         
         return running_browsers
     

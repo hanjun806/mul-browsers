@@ -7,6 +7,10 @@
 
 import sys
 import os
+from PyQt5.QtWidgets import QApplication
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QIcon
+from gui.main_window import MainWindow
 
 # 设置Qt环境变量
 if getattr(sys, 'frozen', False):
@@ -18,18 +22,13 @@ if getattr(sys, 'frozen', False):
     # 强制使用cocoa平台
     os.environ['QT_QPA_PLATFORM'] = 'cocoa'
 
-try:
-    from PyQt5.QtWidgets import QApplication
-    from PyQt5.QtCore import Qt
-    from gui.main_window import MainWindow
-    from gui.icon_helper import get_application_icon
-except ImportError as e:
-    print(f"导入模块失败: {e}")
-    sys.exit(1)
-
 def main():
     """主程序入口"""
     try:
+        # 必须在创建QApplication之前设置
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
+        
         app = QApplication(sys.argv)
         
         # 设置应用程序属性
@@ -39,26 +38,22 @@ def main():
         
         # 设置应用程序图标
         try:
-            app.setWindowIcon(get_application_icon())
+            icon_path = os.path.join(os.path.dirname(__file__), "assets", "icon.png")
+            if os.path.exists(icon_path):
+                app.setWindowIcon(QIcon(icon_path))
         except Exception as e:
             print(f"设置图标失败: {e}")
-        
-        # 设置高DPI支持
-        app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-        app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
         
         # 创建主窗口
         window = MainWindow()
         window.show()
         
-        # 运行应用程序
-        sys.exit(app.exec_())
-        
+        return app.exec_()
     except Exception as e:
-        print(f"应用程序启动失败: {e}")
+        print(f"程序启动失败: {e}")
         import traceback
         traceback.print_exc()
-        sys.exit(1)
+        return 1
 
 if __name__ == "__main__":
-    main() 
+    sys.exit(main()) 

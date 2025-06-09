@@ -13,6 +13,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Dict, Optional
 from datetime import datetime
+import time
 
 @dataclass
 class ProfileInfo:
@@ -282,3 +283,639 @@ class ProfileManager:
             i += 1
         
         return f"{size:.1f} {size_names[i]}" 
+    
+    def profile_exists(self, display_name: str) -> bool:
+        """检查Profile显示名称是否已存在"""
+        # 检查当前已扫描的profiles的显示名称
+        for profile in self.profiles:
+            if profile.display_name == display_name:
+                return True
+        
+        # 重新扫描确保最新状态
+        self.scan_profiles()
+        for profile in self.profiles:
+            if profile.display_name == display_name:
+                return True
+        
+        return False
+    
+    def create_profile(self, name: str, display_name: str = None) -> bool:
+        """创建新的Profile（符合Chrome标准）"""
+        try:
+            if not display_name:
+                display_name = name
+            
+            # 检查显示名称是否已存在
+            if self.profile_exists(display_name):
+                print(f"Profile显示名称 '{display_name}' 已存在")
+                return False
+            
+            # 获取Chrome用户数据目录
+            if not self.chrome_paths:
+                print("未找到Chrome用户数据目录")
+                return False
+            
+            chrome_path = self.chrome_paths[0]  # 使用第一个找到的路径
+            
+            # 自动分配Profile目录名称
+            actual_profile_name = self._get_next_profile_name(chrome_path)
+            
+            # 创建Profile目录
+            profile_path = os.path.join(chrome_path, actual_profile_name)
+            
+            print(f"正在创建Profile: {display_name} -> {profile_path}")
+            
+            # 确保目录不存在
+            if os.path.exists(profile_path):
+                print(f"Profile目录已存在: {profile_path}")
+                return False
+            
+            # 创建Profile目录
+            os.makedirs(profile_path, exist_ok=True)
+            
+            # 创建基本的Preferences文件
+            self._create_initial_preferences(profile_path, display_name)
+            
+            # 更新Chrome的Local State文件
+            self._update_local_state(chrome_path, actual_profile_name, display_name)
+            
+            print(f"成功创建Profile: {display_name} ({actual_profile_name})")
+            print(f"Profile路径: {profile_path}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"创建Profile失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def _create_initial_preferences(self, profile_path: str, display_name: str):
+        """创建初始的Preferences文件（基于Chrome标准结构）"""
+        import json
+        from datetime import datetime
+        
+        # 创建一个最小但完整的Preferences配置
+        # 基于真实Chrome Profile的必要字段
+        preferences = {
+            "browser": {
+                "window_placement": {
+                    "maximized": False,
+                    "left": 100,
+                    "top": 100,
+                    "right": 1380,
+                    "bottom": 820
+                }
+            },
+            "bookmark_bar": {
+                "show_on_all_tabs": True
+            },
+            "profile": {
+                "name": display_name,
+                "created_by_version": "137.0.7151.69",  # 当前Chrome版本
+                "creation_time": datetime.now().strftime("%Y%m%d%H%M%S%f")[:-3],  # Chrome时间格式
+                "exit_type": "None",
+                "content_settings": {
+                    "exceptions": {}
+                }
+            },
+            "extensions": {
+                "settings": {}
+            },
+            "session": {
+                "restore_on_startup": 1
+            },
+            "download": {
+                "prompt_for_download": True
+            },
+            "search": {
+                "suggest_enabled": True
+            },
+            "translate": {
+                "enabled": True
+            },
+            "intl": {
+                "accept_languages": "zh-CN,zh,en",
+                "charset_default": "UTF-8"
+            },
+            "safebrowsing": {
+                "enabled": True
+            },
+            "autofill": {
+                "profile_enabled": True,
+                "credit_card_enabled": True
+            },
+            "privacy": {
+                "network_prediction_options": 1
+            },
+            "password_manager": {
+                "profile_store_login_db": True
+            }
+        }
+        
+        # 写入Preferences文件
+        preferences_path = os.path.join(profile_path, "Preferences")
+        with open(preferences_path, 'w', encoding='utf-8') as f:
+            json.dump(preferences, f, indent=2, ensure_ascii=False)
+        
+        print(f"已创建完整的Preferences文件: {preferences_path}")
+        
+        # 创建其他必要的基础文件
+        self._create_essential_files(profile_path)
+    
+    def _create_essential_files(self, profile_path: str):
+        """创建Chrome Profile的其他必要文件"""
+        import sqlite3
+        
+        # 创建基本的SQLite数据库文件
+        essential_dbs = [
+            ("History", self._create_history_db),
+            ("Cookies", self._create_cookies_db),
+            ("Web Data", self._create_web_data_db),
+            ("Login Data", self._create_login_data_db)
+        ]
+        
+        for db_name, create_func in essential_dbs:
+            db_path = os.path.join(profile_path, db_name)
+            try:
+                create_func(db_path)
+                print(f"已创建数据库: {db_name}")
+            except Exception as e:
+                print(f"创建数据库 {db_name} 失败: {e}")
+        
+        # 创建Bookmarks文件
+        self._create_bookmarks_file(profile_path)
+    
+    def _create_history_db(self, db_path: str):
+        """创建History数据库"""
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # 创建基本的History表结构
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS urls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url LONGVARCHAR,
+                title LONGVARCHAR,
+                visit_count INTEGER DEFAULT 0,
+                typed_count INTEGER DEFAULT 0,
+                last_visit_time INTEGER,
+                hidden INTEGER DEFAULT 0
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS visits (
+                id INTEGER PRIMARY KEY,
+                url INTEGER,
+                visit_time INTEGER,
+                from_visit INTEGER,
+                transition INTEGER DEFAULT 0,
+                segment_id INTEGER,
+                visit_duration INTEGER DEFAULT 0
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+    
+    def _create_cookies_db(self, db_path: str):
+        """创建Cookies数据库"""
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS cookies (
+                creation_utc INTEGER NOT NULL,
+                host_key TEXT NOT NULL,
+                top_frame_site_key TEXT NOT NULL,
+                name TEXT NOT NULL,
+                value TEXT NOT NULL,
+                encrypted_value BLOB DEFAULT '',
+                path TEXT NOT NULL,
+                expires_utc INTEGER NOT NULL,
+                is_secure INTEGER NOT NULL,
+                is_httponly INTEGER NOT NULL,
+                last_access_utc INTEGER NOT NULL,
+                has_expires INTEGER NOT NULL,
+                is_persistent INTEGER NOT NULL,
+                priority INTEGER NOT NULL,
+                samesite INTEGER NOT NULL,
+                source_scheme INTEGER NOT NULL,
+                source_port INTEGER NOT NULL,
+                is_same_party INTEGER NOT NULL
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+    
+    def _create_web_data_db(self, db_path: str):
+        """创建Web Data数据库（自动填充等）"""
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS autofill (
+                name VARCHAR,
+                value VARCHAR,
+                value_lower VARCHAR,
+                date_created INTEGER DEFAULT 0,
+                date_last_used INTEGER DEFAULT 0,
+                count INTEGER DEFAULT 1
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS credit_cards (
+                guid VARCHAR PRIMARY KEY,
+                name_on_card VARCHAR,
+                expiration_month INTEGER,
+                expiration_year INTEGER,
+                card_number_encrypted BLOB,
+                date_modified INTEGER NOT NULL DEFAULT 0
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+    
+    def _create_login_data_db(self, db_path: str):
+        """创建Login Data数据库"""
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS logins (
+                origin_url VARCHAR NOT NULL,
+                action_url VARCHAR,
+                username_element VARCHAR,
+                username_value VARCHAR,
+                password_element VARCHAR,
+                password_value BLOB,
+                submit_element VARCHAR,
+                signon_realm VARCHAR NOT NULL,
+                date_created INTEGER NOT NULL,
+                blacklisted_by_user INTEGER NOT NULL,
+                scheme INTEGER NOT NULL,
+                password_type INTEGER,
+                times_used INTEGER,
+                form_data BLOB,
+                date_synced INTEGER,
+                display_name VARCHAR,
+                icon_url VARCHAR,
+                federation_url VARCHAR,
+                skip_zero_click INTEGER,
+                generation_upload_status INTEGER,
+                possible_username_pairs BLOB,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date_last_used INTEGER,
+                moving_blocked_for BLOB,
+                date_password_modified INTEGER
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+    
+    def _create_bookmarks_file(self, profile_path: str):
+        """创建Bookmarks文件"""
+        import json
+        
+        bookmarks = {
+            "checksum": "0000000000000000000000000000000000000000",
+            "roots": {
+                "bookmark_bar": {
+                    "children": [],
+                    "date_added": "13393900000000000",
+                    "date_modified": "0",
+                    "id": "1",
+                    "name": "书签栏",
+                    "type": "folder"
+                },
+                "other": {
+                    "children": [],
+                    "date_added": "13393900000000000",
+                    "date_modified": "0",
+                    "id": "2",
+                    "name": "其他书签",
+                    "type": "folder"
+                },
+                "synced": {
+                    "children": [],
+                    "date_added": "13393900000000000",
+                    "date_modified": "0",
+                    "id": "3",
+                    "name": "移动设备书签",
+                    "type": "folder"
+                }
+            },
+            "version": 1
+        }
+        
+        bookmarks_path = os.path.join(profile_path, "Bookmarks")
+        with open(bookmarks_path, 'w', encoding='utf-8') as f:
+            json.dump(bookmarks, f, indent=2, ensure_ascii=False)
+        
+        print(f"已创建Bookmarks文件: {bookmarks_path}")
+    
+    def _update_local_state(self, chrome_path: str, profile_name: str, display_name: str):
+        """更新Chrome的Local State文件以注册新Profile"""
+        import json
+        from datetime import datetime
+        import shutil
+        import time
+        
+        local_state_path = os.path.join(chrome_path, "Local State")
+        backup_path = local_state_path + ".backup"
+        
+        try:
+            # 创建备份
+            if os.path.exists(local_state_path):
+                shutil.copy2(local_state_path, backup_path)
+                print(f"已创建Local State备份: {backup_path}")
+            
+            # 读取现有的Local State
+            local_state = {}
+            if os.path.exists(local_state_path):
+                try:
+                    with open(local_state_path, 'r', encoding='utf-8') as f:
+                        local_state = json.load(f)
+                    print(f"成功读取Local State文件，大小: {len(json.dumps(local_state))} 字符")
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                    print(f"Local State文件损坏: {e}，将创建新的")
+                    local_state = {}
+            else:
+                print("Local State文件不存在，将创建新的")
+            
+            # 确保profile字段存在
+            if "profile" not in local_state:
+                local_state["profile"] = {}
+                print("创建profile字段")
+            
+            if "info_cache" not in local_state["profile"]:
+                local_state["profile"]["info_cache"] = {}
+                print("创建info_cache字段")
+            
+            # 检查Profile是否已存在
+            if profile_name in local_state["profile"]["info_cache"]:
+                print(f"Profile {profile_name} 已在Local State中存在，将更新")
+            else:
+                print(f"将添加新Profile {profile_name} 到Local State")
+            
+            # 添加新Profile信息
+            current_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            
+            # 使用Chrome标准的Profile配置格式
+            profile_info = {
+                "avatar_icon": "chrome://theme/IDR_PROFILE_AVATAR_0",
+                "background_apps": False,
+                "created_time": current_time,
+                "name": display_name,
+                "signin_required": False,
+                "supervised_user_id": "",
+                "is_ephemeral": False,
+                "using_default_name": False,
+                "using_default_avatar": True,
+                "is_omitted_from_desktop_shortcut": False,
+                "theme_color": 4279125008,  # 默认蓝色主题
+                "managed_user_id": "",
+                "shortcut_name": display_name,
+                "user_name": display_name,
+                "gaia_name": display_name,
+                "local_profile_name": display_name,
+                "gaia_given_name": "",  # 清空可能冲突的字段
+                "gaia_id": "",
+                "is_using_default_name": False
+            }
+            
+            local_state["profile"]["info_cache"][profile_name] = profile_info
+            
+            # 更新其他相关字段
+            if "last_used" not in local_state["profile"]:
+                local_state["profile"]["last_used"] = profile_name
+            
+            # 确保profiles_order存在并更新
+            if "profiles_order" not in local_state["profile"]:
+                local_state["profile"]["profiles_order"] = []
+            
+            if profile_name not in local_state["profile"]["profiles_order"]:
+                local_state["profile"]["profiles_order"].append(profile_name)
+            
+            # 尝试写入文件，重试机制
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    # 写入临时文件，然后重命名（原子操作）
+                    temp_path = local_state_path + ".tmp"
+                    with open(temp_path, 'w', encoding='utf-8') as f:
+                        json.dump(local_state, f, indent=2, ensure_ascii=False)
+                    
+                    # 原子替换
+                    if os.path.exists(local_state_path):
+                        if platform.system() == "Windows":
+                            os.remove(local_state_path)
+                        os.rename(temp_path, local_state_path)
+                    else:
+                        os.rename(temp_path, local_state_path)
+                    
+                    print(f"成功更新Local State文件: {local_state_path}")
+                    print(f"已注册Profile: {profile_name} -> {display_name}")
+                    
+                    # 验证写入是否成功
+                    try:
+                        with open(local_state_path, 'r', encoding='utf-8') as f:
+                            verify_data = json.load(f)
+                        if profile_name in verify_data.get("profile", {}).get("info_cache", {}):
+                            print(f"✅ 验证成功：Profile {profile_name} 已在Local State中")
+                            return True
+                        else:
+                            print(f"❌ 验证失败：Profile {profile_name} 未在Local State中找到")
+                    except Exception as e:
+                        print(f"验证失败: {e}")
+                    
+                    break
+                    
+                except Exception as e:
+                    print(f"写入尝试 {attempt + 1} 失败: {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(0.5)  # 等待0.5秒后重试
+                    else:
+                        raise
+            
+        except Exception as e:
+            print(f"更新Local State失败: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # 尝试恢复备份
+            if os.path.exists(backup_path):
+                try:
+                    shutil.copy2(backup_path, local_state_path)
+                    print("已从备份恢复Local State文件")
+                except Exception as restore_e:
+                    print(f"恢复备份失败: {restore_e}")
+            
+            return False
+        
+        return True
+    
+    def _get_next_profile_name(self, chrome_path: str) -> str:
+        """获取下一个可用的Profile目录名称"""
+        try:
+            # 扫描现有的Profile目录
+            existing_profile_numbers = []
+            
+            if os.path.exists(chrome_path):
+                for item in os.listdir(chrome_path):
+                    if item.startswith("Profile "):
+                        try:
+                            # 提取数字部分
+                            number_part = item[8:]  # 移除"Profile "前缀
+                            if number_part.isdigit():
+                                existing_profile_numbers.append(int(number_part))
+                        except:
+                            continue
+            
+            # 找到下一个可用的数字
+            if not existing_profile_numbers:
+                next_number = 1
+            else:
+                next_number = max(existing_profile_numbers) + 1
+            
+            return f"Profile {next_number}"
+            
+        except Exception as e:
+            print(f"获取Profile名称时出错: {e}")
+            # 回退到时间戳方式
+            return f"Profile {int(time.time() % 10000)}"
+    
+    def update_profile_display_name(self, profile_name: str, new_display_name: str) -> bool:
+        """更新Profile的显示名称"""
+        try:
+            # 找到Profile路径
+            profile_path = None
+            for chrome_path in self.chrome_paths:
+                if profile_name == "Default":
+                    test_path = os.path.join(chrome_path, "Default")
+                else:
+                    test_path = os.path.join(chrome_path, profile_name)
+                
+                if os.path.exists(test_path):
+                    profile_path = test_path
+                    chrome_data_path = chrome_path
+                    break
+            
+            if not profile_path:
+                print(f"未找到Profile: {profile_name}")
+                return False
+            
+            # 更新Preferences文件
+            prefs_file = os.path.join(profile_path, "Preferences")
+            if os.path.exists(prefs_file):
+                with open(prefs_file, 'r', encoding='utf-8') as f:
+                    prefs = json.load(f)
+                
+                # 更新各个可能的名称字段
+                if 'profile' not in prefs:
+                    prefs['profile'] = {}
+                
+                prefs['profile']['name'] = new_display_name
+                prefs['profile']['local_profile_name'] = new_display_name
+                
+                # 保存更新后的Preferences
+                with open(prefs_file, 'w', encoding='utf-8') as f:
+                    json.dump(prefs, f, indent=2, ensure_ascii=False)
+            
+            # 更新Local State文件
+            local_state_file = os.path.join(chrome_data_path, "Local State")
+            if os.path.exists(local_state_file):
+                with open(local_state_file, 'r', encoding='utf-8') as f:
+                    local_state = json.load(f)
+                
+                # 更新Profile信息缓存
+                profile_info_cache = local_state.get('profile', {}).get('info_cache', {})
+                if profile_name in profile_info_cache:
+                    profile_info_cache[profile_name]['name'] = new_display_name
+                    profile_info_cache[profile_name]['user_name'] = new_display_name
+                    profile_info_cache[profile_name]['shortcut_name'] = new_display_name
+                
+                # 保存Local State
+                with open(local_state_file, 'w', encoding='utf-8') as f:
+                    json.dump(local_state, f, indent=2, ensure_ascii=False)
+            
+            print(f"成功更新Profile显示名称: {profile_name} -> {new_display_name}")
+            
+            # 重新扫描以更新列表
+            self.scan_profiles()
+            
+            return True
+            
+        except Exception as e:
+            print(f"更新Profile显示名称失败: {e}")
+            return False
+    
+    def delete_profile(self, profile_name: str) -> bool:
+        """删除Profile"""
+        try:
+            import shutil
+            
+            # 找到Profile路径
+            profile_path = None
+            chrome_data_path = None
+            
+            for chrome_path in self.chrome_paths:
+                if profile_name == "Default":
+                    test_path = os.path.join(chrome_path, "Default")
+                else:
+                    test_path = os.path.join(chrome_path, profile_name)
+                
+                if os.path.exists(test_path):
+                    profile_path = test_path
+                    chrome_data_path = chrome_path
+                    break
+            
+            if not profile_path:
+                print(f"未找到Profile: {profile_name}")
+                return False
+            
+            # 不允许删除默认Profile
+            if profile_name == "Default":
+                print("不允许删除默认Profile")
+                return False
+            
+            # 删除Profile目录
+            shutil.rmtree(profile_path)
+            print(f"已删除Profile目录: {profile_path}")
+            
+            # 从Local State中移除Profile信息
+            local_state_file = os.path.join(chrome_data_path, "Local State")
+            if os.path.exists(local_state_file):
+                try:
+                    with open(local_state_file, 'r', encoding='utf-8') as f:
+                        local_state = json.load(f)
+                    
+                    # 从Profile信息缓存中移除
+                    profile_info_cache = local_state.get('profile', {}).get('info_cache', {})
+                    if profile_name in profile_info_cache:
+                        del profile_info_cache[profile_name]
+                    
+                    # 保存Local State
+                    with open(local_state_file, 'w', encoding='utf-8') as f:
+                        json.dump(local_state, f, indent=2, ensure_ascii=False)
+                    
+                    print(f"已从Local State中移除Profile信息: {profile_name}")
+                    
+                except Exception as e:
+                    print(f"更新Local State时出错: {e}")
+            
+            print(f"成功删除Profile: {profile_name}")
+            
+            # 重新扫描以更新列表
+            self.scan_profiles()
+            
+            return True
+            
+        except Exception as e:
+            print(f"删除Profile失败: {e}")
+            return False 
