@@ -18,6 +18,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                             QDialog, QDialogButtonBox, QFormLayout, QFileDialog)
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize, QTime
 from PyQt5.QtGui import QIcon, QFont, QPalette, QColor, QPixmap
+import datetime
 
 # 导入核心模块
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -408,7 +409,7 @@ class ProfileEditDialog(QDialog):
         # 创建详细的删除确认对话框
         dialog = QDialog(self)
         dialog.setWindowTitle("确认删除Profile")
-        dialog.setFixedSize(500, 450)
+        dialog.setFixedSize(600, 550)  # 增加窗口大小
         dialog.setModal(True)
         
         layout = QVBoxLayout()
@@ -458,23 +459,31 @@ class ProfileEditDialog(QDialog):
         size_str = pm.format_size(self.profile.storage_size)
         
         delete_items = [
-            f"📁 整个Profile目录 ({size_str})",
-            f"📚 所有书签 ({self.profile.bookmarks_count} 个)",
-            f"🔌 所有扩展程序 ({self.profile.extensions_count} 个)",
-            "🔒 所有已保存的登录信息和密码",
-            "🕒 完整的浏览历史记录",
-            "🍪 所有Cookie和网站数据",
-            "📥 下载历史记录",
-            "⚙️ 所有个人设置和偏好",
-            "📝 自动填充数据",
-            "🔐 已保存的信用卡信息",
-            "📱 同步数据（如果已启用）",
-            "🎨 主题和自定义设置"
+            f"• 整个Profile目录 ({size_str})",
+            f"• 所有书签 ({self.profile.bookmarks_count} 个)",
+            f"• 所有扩展程序 ({self.profile.extensions_count} 个)",
+            "• 所有已保存的登录信息和密码",
+            "• 完整的浏览历史记录",
+            "• 所有Cookie和网站数据",
+            "• 下载历史记录",
+            "• 所有个人设置和偏好",
+            "• 自动填充数据",
+            "• 已保存的信用卡信息",
+            "• 同步数据（如果已启用）",
+            "• 主题和自定义设置"
         ]
         
         for item in delete_items:
-            item_label = QLabel(f"• {item}")
-            item_label.setStyleSheet("margin: 2px 0; color: #495057;")
+            item_label = QLabel(item)
+            item_label.setWordWrap(True)
+            item_label.setStyleSheet("""
+                QLabel {
+                    margin: 3px 5px;
+                    padding: 2px;
+                    color: #495057;
+                    font-size: 12px;
+                }
+            """)
             details_layout.addWidget(item_label)
         
         details_group.setLayout(details_layout)
@@ -482,9 +491,9 @@ class ProfileEditDialog(QDialog):
         
         # 最终警告
         final_warning = QLabel(
-            "🚨 <b>此操作无法撤销！</b><br>"
-            "🔥 所有数据将被永久删除<br>"
-            "📱 如果此Profile已与Google账号同步，本地删除不会影响云端数据"
+            "<b>⚠️ 此操作无法撤销！</b><br>"
+            "所有数据将被永久删除<br>"
+            "如果此Profile已与Google账号同步，本地删除不会影响云端数据"
         )
         final_warning.setWordWrap(True)
         final_warning.setStyleSheet("""
@@ -495,6 +504,7 @@ class ProfileEditDialog(QDialog):
                 padding: 10px;
                 margin: 10px 0;
                 color: #856404;
+                font-size: 12px;
             }
         """)
         layout.addWidget(final_warning)
@@ -527,7 +537,7 @@ class ProfileEditDialog(QDialog):
             }
         """)
         
-        delete_btn = QPushButton("🗑️ 确认删除")
+        delete_btn = QPushButton("确认删除")
         delete_btn.setStyleSheet("""
             QPushButton {
                 background-color: #dc3545;
@@ -1334,8 +1344,7 @@ class StatusMonitorWidget(QWidget):
     
     def add_log(self, message: str):
         """添加日志消息"""
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
         self.log_text.append(f"[{timestamp}] {message}")
 
 class MainWindow(QMainWindow):
@@ -1755,6 +1764,10 @@ class MainWindow(QMainWindow):
         try:
             profiles = self.profile_manager.scan_profiles()
             print(f"扫描到{len(profiles)}个Profile")
+            
+            # 应用保存的排序
+            print("应用保存的排序...")
+            profiles = self.sort_profiles_by_saved_order(profiles)
             
             self.profile_list.clear()
             
@@ -2465,7 +2478,7 @@ class MainWindow(QMainWindow):
                 
                 with open(file_path, 'w', encoding='utf-8') as f:
                     json.dump({
-                        'export_time': datetime.now().isoformat(),
+                        'export_time': datetime.datetime.now().isoformat(),
                         'profiles': profiles_data
                     }, f, indent=2, ensure_ascii=False)
                 
@@ -2494,13 +2507,17 @@ class MainWindow(QMainWindow):
         elif sort_by == 'date':
             profiles.sort(key=lambda p: p.created_time or datetime.min, reverse=True)
         
+        # 保存新的排序
+        profile_order = [profile.name for profile in profiles]
+        self.config_manager.save_profile_order(profile_order)
+        
         # 重新排列列表
         self.profile_list.clear()
-        running_browsers = self.browser_manager.get_running_browsers()
+        running_browsers = self.browser_manager.get_all_running_browsers(profiles)
         
         for profile in profiles:
-            is_running = any(browser.profile_name == profile.name for browser in running_browsers)
-            browser_info = next((browser for browser in running_browsers if browser.profile_name == profile.name), None)
+            is_running = profile.name in running_browsers
+            browser_info = running_browsers.get(profile.name) if is_running else None
             
             item_widget = ProfileItemWidget(profile, is_running, browser_info)
             item_widget.startRequested.connect(self.start_browser_from_profile)
@@ -2514,7 +2531,8 @@ class MainWindow(QMainWindow):
             self.profile_list.setItemWidget(item, item_widget)
         
         sort_names = {'name': '名称', 'size': '大小', 'date': '日期'}
-        self.status_monitor.add_log(f"📋 Profile已按{sort_names[sort_by]}排序")
+        self.status_monitor.add_log(f"📋 Profile已按{sort_names[sort_by]}排序并保存")
+        self.status_message.setText(f"Profile已按{sort_names[sort_by]}排序并保存")
     
     def open_chrome_data_directory(self):
         """打开Chrome数据目录"""
@@ -2718,7 +2736,7 @@ F1              显示快捷键
         # 创建详细的删除确认对话框
         dialog = QDialog(self)
         dialog.setWindowTitle("确认删除Profile")
-        dialog.setFixedSize(500, 450)
+        dialog.setFixedSize(600, 550)  # 增加窗口大小
         dialog.setModal(True)
         
         layout = QVBoxLayout()
@@ -2768,23 +2786,31 @@ F1              显示快捷键
         size_str = pm.format_size(profile.storage_size)
         
         delete_items = [
-            f"📁 整个Profile目录 ({size_str})",
-            f"📚 所有书签 ({profile.bookmarks_count} 个)",
-            f"🔌 所有扩展程序 ({profile.extensions_count} 个)",
-            "🔒 所有已保存的登录信息和密码",
-            "🕒 完整的浏览历史记录",
-            "🍪 所有Cookie和网站数据",
-            "📥 下载历史记录",
-            "⚙️ 所有个人设置和偏好",
-            "📝 自动填充数据",
-            "🔐 已保存的信用卡信息",
-            "📱 同步数据（如果已启用）",
-            "🎨 主题和自定义设置"
+            f"• 整个Profile目录 ({size_str})",
+            f"• 所有书签 ({profile.bookmarks_count} 个)",
+            f"• 所有扩展程序 ({profile.extensions_count} 个)",
+            "• 所有已保存的登录信息和密码",
+            "• 完整的浏览历史记录",
+            "• 所有Cookie和网站数据",
+            "• 下载历史记录",
+            "• 所有个人设置和偏好",
+            "• 自动填充数据",
+            "• 已保存的信用卡信息",
+            "• 同步数据（如果已启用）",
+            "• 主题和自定义设置"
         ]
         
         for item in delete_items:
-            item_label = QLabel(f"• {item}")
-            item_label.setStyleSheet("margin: 2px 0; color: #495057;")
+            item_label = QLabel(item)
+            item_label.setWordWrap(True)
+            item_label.setStyleSheet("""
+                QLabel {
+                    margin: 3px 5px;
+                    padding: 2px;
+                    color: #495057;
+                    font-size: 12px;
+                }
+            """)
             details_layout.addWidget(item_label)
         
         details_group.setLayout(details_layout)
@@ -2792,9 +2818,9 @@ F1              显示快捷键
         
         # 最终警告
         final_warning = QLabel(
-            "🚨 <b>此操作无法撤销！</b><br>"
-            "🔥 所有数据将被永久删除<br>"
-            "📱 如果此Profile已与Google账号同步，本地删除不会影响云端数据"
+            "<b>⚠️ 此操作无法撤销！</b><br>"
+            "所有数据将被永久删除<br>"
+            "如果此Profile已与Google账号同步，本地删除不会影响云端数据"
         )
         final_warning.setWordWrap(True)
         final_warning.setStyleSheet("""
@@ -2805,6 +2831,7 @@ F1              显示快捷键
                 padding: 10px;
                 margin: 10px 0;
                 color: #856404;
+                font-size: 12px;
             }
         """)
         layout.addWidget(final_warning)
@@ -2837,7 +2864,7 @@ F1              显示快捷键
             }
         """)
         
-        delete_btn = QPushButton("🗑️ 确认删除")
+        delete_btn = QPushButton("确认删除")
         delete_btn.setStyleSheet("""
             QPushButton {
                 background-color: #dc3545;
