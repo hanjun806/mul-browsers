@@ -61,7 +61,7 @@ def test_multi_instance_launch():
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
         
-        print(f'发现 {len(chrome_processes)} 个Chrome主进程:')
+        # print(f'发现 {len(chrome_processes)} 个Chrome主进程:')
         for i, proc in enumerate(chrome_processes, 1):
             print(f'  {i}. PID: {proc["pid"]}')
             # 提取用户数据目录

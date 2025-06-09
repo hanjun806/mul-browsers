@@ -506,7 +506,7 @@ class BrowserManager:
                 except Exception as e:
                     continue
             
-            print(f"发现 {len(chrome_main_processes)} 个Chrome主进程")
+            # print(f"发现 {len(chrome_main_processes)} 个Chrome主进程")
             
             # 处理每个Chrome主进程
             for chrome_proc in chrome_main_processes:
