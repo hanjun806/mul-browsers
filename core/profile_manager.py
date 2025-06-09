@@ -93,28 +93,55 @@ class ProfileManager:
     def _create_profile_info(self, name: str, path: str, is_default: bool) -> Optional[ProfileInfo]:
         """创建Profile信息对象"""
         try:
-            # 读取Profile的偏好设置
-            prefs_file = os.path.join(path, "Preferences")
-            display_name = name
+            # 首先从Local State中获取显示名称
+            display_name = self._get_profile_name_from_local_state(name, path)
+            
+            # 如果Local State中没有找到，再从Preferences中读取
+            if display_name == name:
+                prefs_file = os.path.join(path, "Preferences")
+                if os.path.exists(prefs_file):
+                    try:
+                        with open(prefs_file, 'r', encoding='utf-8') as f:
+                            prefs = json.load(f)
+                        
+                        # 获取显示名称 - Chrome存储在不同的位置
+                        profile_section = prefs.get('profile', {})
+                        
+                        # 尝试多个可能的名称字段
+                        possible_name_fields = ['name', 'local_profile_name', 'user_name']
+                        for field in possible_name_fields:
+                            if field in profile_section and profile_section[field]:
+                                display_name = profile_section[field]
+                                break
+                        
+                        # 如果还是没有找到名称，尝试从account_info中获取
+                        account_info = prefs.get('account_info', {})
+                        if not display_name or display_name == name:
+                            if 'full_name' in account_info and account_info['full_name']:
+                                display_name = account_info['full_name']
+                            elif 'given_name' in account_info and account_info['given_name']:
+                                display_name = account_info['given_name']
+                        
+                        # 最后尝试从signin相关信息获取
+                        if not display_name or display_name == name:
+                            signin_info = prefs.get('signin', {})
+                            if 'allowed_username' in signin_info and signin_info['allowed_username']:
+                                display_name = signin_info['allowed_username']
+                        
+                    except (json.JSONDecodeError, KeyError) as e:
+                        print(f"读取Preferences文件出错: {e}")
+                        pass
+            
+            # 获取时间信息
             created_time = None
             last_used_time = None
-            
+            prefs_file = os.path.join(path, "Preferences")
             if os.path.exists(prefs_file):
                 try:
-                    with open(prefs_file, 'r', encoding='utf-8') as f:
-                        prefs = json.load(f)
-                    
-                    # 获取显示名称
-                    profile_info = prefs.get('profile', {})
-                    if 'name' in profile_info:
-                        display_name = profile_info['name']
-                    
-                    # 获取时间信息
                     stats = os.stat(prefs_file)
                     created_time = datetime.fromtimestamp(stats.st_ctime)
                     last_used_time = datetime.fromtimestamp(stats.st_mtime)
-                    
-                except (json.JSONDecodeError, KeyError):
+                except Exception:
                     pass
             
             # 计算书签数量
@@ -141,6 +168,36 @@ class ProfileManager:
         except Exception as e:
             print(f"创建Profile信息时出错: {e}")
             return None
+    
+    def _get_profile_name_from_local_state(self, profile_name: str, profile_path: str) -> str:
+        """从Local State文件中获取Profile名称"""
+        try:
+            # Local State文件在Chrome用户数据目录的根目录
+            chrome_dir = os.path.dirname(profile_path)
+            local_state_file = os.path.join(chrome_dir, "Local State")
+            
+            if os.path.exists(local_state_file):
+                with open(local_state_file, 'r', encoding='utf-8') as f:
+                    local_state = json.load(f)
+                
+                # 在profile.info_cache中查找
+                profile_info_cache = local_state.get('profile', {}).get('info_cache', {})
+                
+                # 查找对应的profile
+                for profile_key, profile_data in profile_info_cache.items():
+                    if profile_key == profile_name or profile_key.endswith(profile_name):
+                        # 尝试获取名称
+                        if 'name' in profile_data and profile_data['name']:
+                            return profile_data['name']
+                        elif 'user_name' in profile_data and profile_data['user_name']:
+                            return profile_data['user_name']
+                        elif 'gaia_name' in profile_data and profile_data['gaia_name']:
+                            return profile_data['gaia_name']
+            
+        except Exception as e:
+            print(f"读取Local State文件出错: {e}")
+        
+        return profile_name  # 如果都失败了，返回原始名称
     
     def _count_bookmarks(self, profile_path: str) -> int:
         """统计书签数量"""
